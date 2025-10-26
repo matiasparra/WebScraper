@@ -1,0 +1,15 @@
+# Directorios de build
+[Dd]ebug/
+[Rr]elease/
+**/bin/
+**/obj/
+
+# Caché y archivos de Visual Studio (SOLUCIONA EL ERROR DE PERMISOS)
+.vs/
+*.suo
+*.user
+*.vssscc
+
+# Paquetes y dependencias
+/packages/
+*.nupkg
