@@ -5,12 +5,18 @@ using OpenQA.Selenium.Chrome;
 using WebDriverManager;
 using WebDriverManager.DriverConfigs.Impl;
 using System.IO;
-using System; // Agregamos System para usar Environment
+using System;
+using System.Threading.Tasks;
 
 public class Producto
 {
     public string Nombre { get; set; }
-    public decimal Precio { get; set; }
+    // Precio de la página (Precio base)
+    public decimal PrecioBase { get; set; }
+    // Precio Mayorista (PrecioBase + 30%)
+    public decimal PrecioMayorista { get; set; }
+    // Precio Minorista (PrecioBase + 100%)
+    public decimal PrecioMinorista { get; set; }
     public string UrlOrigen { get; set; }
 }
 
@@ -19,42 +25,31 @@ public partial class Program
     public static async Task Main(string[] args)
     {
         // --- CONFIGURACIÓN DE LA EXTRACCIÓN ---
-
-        // La URL base sin el parámetro de página
         string urlBase = "https://www.santerialacatedral.com.ar/products/category/aromanza-1";
-        // Número total de páginas a extraer
         int totalPaginas = 6;
 
-        // 💡 CAMBIO CLAVE: Definir la ruta de salida al Escritorio
-        // 1. Obtiene la ruta al escritorio del usuario
         string desktopPath = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
-        // 2. Combina la ruta del escritorio con el nombre del archivo de salida
-        string archivoSalida = Path.Combine(desktopPath, "ProductosExtraidos.xlsx");
+        string archivoSalida = Path.Combine(desktopPath, "ProductosConPreciosCalculados.xlsx"); // Nombre de archivo actualizado
 
-        // Lista donde se guardarán los productos de TODAS las páginas
         var todosLosProductos = new List<Producto>();
 
         Console.WriteLine($"Iniciando extracción de datos de {totalPaginas} páginas del catálogo...");
 
-        // Bucle para iterar de la página 1 a la 6
         for (int page = 1; page <= totalPaginas; page++)
         {
-            // Construye la URL completa con el número de página
             string urlPagina = $"{urlBase}?page={page}";
             Console.WriteLine($"\n-> Extrayendo página {page} de {totalPaginas}: {urlPagina}");
 
-            // Llama a la función de scraping para la página actual
             var productosPagina = ScrapearCatalogoSelenium(urlPagina);
 
             if (productosPagina.Any())
             {
                 Console.WriteLine($"   - Se encontraron {productosPagina.Count} productos.");
-                // Agrega los productos de esta página a la lista general
                 todosLosProductos.AddRange(productosPagina);
             }
             else
             {
-                Console.WriteLine("   - ¡Advertencia! No se encontraron productos en esta página. Puede ser el final del catálogo o un error.");
+                Console.WriteLine($"   - ¡Advertencia! No se encontraron productos en la página {page}.");
             }
         }
 
@@ -78,9 +73,8 @@ public partial class Program
     {
         var productos = new List<Producto>();
 
-        // Configurar y descargar el driver de Chrome automáticamente
+        // Configuración de WebDriver
         new DriverManager().SetUpDriver(new ChromeConfig());
-
         var options = new ChromeOptions();
         options.AddArgument("--headless");
         options.AddArgument("--disable-gpu");
@@ -91,10 +85,8 @@ public partial class Program
             try
             {
                 driver.Navigate().GoToUrl(urlCatalogo);
-                // Damos 12 segundos de espera para que cargue el JavaScript
                 System.Threading.Thread.Sleep(12000);
 
-                // 1. SELECTOR DEL CONTENEDOR DE PRODUCTO
                 var nodosProductos = driver.FindElements(By.XPath("//div[contains(@class, 'product-default')]"));
 
                 foreach (var nodoProducto in nodosProductos)
@@ -104,10 +96,7 @@ public partial class Program
 
                     try
                     {
-                        // 2. SELECTOR DEL NOMBRE
                         nombreElemento = nodoProducto.FindElement(By.XPath(".//a[@class='default-text-product']"));
-
-                        // 3. SELECTOR DEL PRECIO
                         precioElemento = nodoProducto.FindElement(By.XPath(".//span[@class='product-price']"));
                     }
                     catch (NoSuchElementException)
@@ -118,10 +107,7 @@ public partial class Program
                     if (nombreElemento != null && precioElemento != null)
                     {
                         string nombre = nombreElemento.Text.Trim();
-                        string precioTexto = precioElemento.Text;
-
-                        // Limpieza del texto del precio
-                        string precioTextoLimpio = precioTexto
+                        string precioTextoLimpio = precioElemento.Text
                             .Split('\n')[0]
                             .Replace("$", "")
                             .Replace(" ", "")
@@ -131,9 +117,20 @@ public partial class Program
                             precioTextoLimpio,
                             NumberStyles.Currency,
                             new CultureInfo("es-AR"),
-                            out decimal precio))
+                            out decimal precioBase))
                         {
-                            productos.Add(new Producto { Nombre = nombre, Precio = precio, UrlOrigen = urlCatalogo });
+                            // 💡 CÁLCULO DE PRECIOS
+                            decimal precioMayorista = precioBase * 1.30m; // 30% adicional
+                            decimal precioMinorista = precioBase * 2.00m; // 100% adicional (el doble)
+
+                            productos.Add(new Producto
+                            {
+                                Nombre = nombre,
+                                PrecioBase = precioBase,
+                                PrecioMayorista = precioMayorista,
+                                PrecioMinorista = precioMinorista,
+                                UrlOrigen = urlCatalogo
+                            });
                         }
                     }
                 }
@@ -150,9 +147,32 @@ public partial class Program
     {
         using (var workbook = new XLWorkbook())
         {
-            var worksheet = workbook.Worksheets.Add("Catálogo");
-            worksheet.Cell(1, 1).InsertTable(datos);
-            worksheet.Column(2).Style.NumberFormat.Format = "$ #.##0,00";
+            var worksheet = workbook.Worksheets.Add("Catálogo Precios");
+
+            // Configurar encabezados
+            worksheet.Cell(1, 1).Value = "Nombre";
+            worksheet.Cell(1, 2).Value = "Precio Base (Web)";
+            worksheet.Cell(1, 3).Value = "Precio Mayorista (+30%)";
+            worksheet.Cell(1, 4).Value = "Precio Minorista (+100%)";
+            worksheet.Cell(1, 5).Value = "URL Origen";
+
+            // Llenar datos
+            int fila = 2;
+            foreach (var producto in datos)
+            {
+                worksheet.Cell(fila, 1).Value = producto.Nombre;
+                worksheet.Cell(fila, 2).Value = producto.PrecioBase;
+                worksheet.Cell(fila, 3).Value = producto.PrecioMayorista;
+                worksheet.Cell(fila, 4).Value = producto.PrecioMinorista;
+                worksheet.Cell(fila, 5).Value = producto.UrlOrigen;
+
+                fila++;
+            }
+
+            // Aplicar formato de moneda a las columnas de precios (2, 3 y 4)
+            worksheet.Columns("B:D").Style.NumberFormat.Format = "$ #,##0.00";
+
+            // Ajustar el ancho de las columnas
             worksheet.Columns().AdjustToContents();
             workbook.SaveAs(rutaArchivo);
         }
