@@ -7,73 +7,191 @@ using WebDriverManager.DriverConfigs.Impl;
 using System.IO;
 using System;
 using System.Threading.Tasks;
+using System.Collections.Generic;
+using System.Linq;
 
 public class Producto
 {
     public string Nombre { get; set; }
-    // Precio de la página (Precio base)
     public decimal PrecioBase { get; set; }
-    // Precio Mayorista (PrecioBase + 30%)
     public decimal PrecioMayorista { get; set; }
-    // Precio Minorista (PrecioBase + 100%)
     public decimal PrecioMinorista { get; set; }
     public string UrlOrigen { get; set; }
+}
+
+public class Categoria
+{
+    public string Nombre { get; set; }
+    public string UrlBase { get; set; }
+    public List<Producto> Productos { get; set; } = new List<Producto>();
 }
 
 public partial class Program
 {
     public static async Task Main(string[] args)
     {
-        // --- CONFIGURACIÓN DE LA EXTRACCIÓN ---
-        string urlBase = "https://www.santerialacatedral.com.ar/products/category/aromanza-1";
-        int totalPaginas = 6;
-
+        string urlBaseCategorias = "https://www.santerialacatedral.com.ar/products/category/";
         string desktopPath = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
-        string archivoSalida = Path.Combine(desktopPath, "ProductosConPreciosCalculados.xlsx"); // Nombre de archivo actualizado
+        string archivoSalida = Path.Combine(desktopPath, "CatalogoCompleto.xlsx");
 
-        var todosLosProductos = new List<Producto>();
+        Console.WriteLine("Iniciando descubrimiento de categorías...");
 
-        Console.WriteLine($"Iniciando extracción de datos de {totalPaginas} páginas del catálogo...");
+        List<Categoria> categorias = DescubrirCategorias(urlBaseCategorias);
 
-        for (int page = 1; page <= totalPaginas; page++)
+        if (categorias.Count == 0)
         {
-            string urlPagina = $"{urlBase}?page={page}";
-            Console.WriteLine($"\n-> Extrayendo página {page} de {totalPaginas}: {urlPagina}");
+            Console.WriteLine("❌ No se encontraron categorías para procesar. Finalizando.");
+            Console.ReadKey();
+            return;
+        }
 
-            var productosPagina = ScrapearCatalogoSelenium(urlPagina);
+        Console.WriteLine($"✅ Se encontraron {categorias.Count} categorías. Iniciando extracción total...");
 
-            if (productosPagina.Any())
+        var todasLasCategoriasExtraidas = new List<Categoria>();
+
+        foreach (var categoria in categorias)
+        {
+            Console.WriteLine($"\n=======================================================");
+            Console.WriteLine($"== PROCESANDO CATEGORÍA: {categoria.Nombre.ToUpper()} ==");
+            Console.WriteLine($"=======================================================");
+
+            int totalPaginas = DeterminarTotalPaginas(categoria.UrlBase);
+            Console.WriteLine($"-> Total de páginas detectadas para {categoria.Nombre}: {totalPaginas}");
+
+            for (int page = 1; page <= totalPaginas; page++)
             {
-                Console.WriteLine($"   - Se encontraron {productosPagina.Count} productos.");
-                todosLosProductos.AddRange(productosPagina);
+                string urlPagina = $"{categoria.UrlBase}?page={page}";
+                Console.WriteLine($"   -> Extrayendo página {page} de {totalPaginas}: {urlPagina}");
+
+                var productosPagina = ScrapearCatalogoSelenium(urlPagina);
+
+                if (productosPagina.Any())
+                {
+                    Console.WriteLine($"      - Encontrados {productosPagina.Count} productos.");
+                    categoria.Productos.AddRange(productosPagina);
+                }
+                else if (page == 1)
+                {
+                    Console.WriteLine($"      - ¡Advertencia! La categoría {categoria.Nombre} no contiene productos. Saltando.");
+                    break;
+                }
             }
-            else
+
+            if (categoria.Productos.Any())
             {
-                Console.WriteLine($"   - ¡Advertencia! No se encontraron productos en la página {page}.");
+                Console.WriteLine($"   ✅ Total extraído para {categoria.Nombre}: {categoria.Productos.Count} productos.");
+                todasLasCategoriasExtraidas.Add(categoria);
             }
         }
 
-        // --- PROCESO FINAL ---
-
-        if (todosLosProductos.Any())
+        if (todasLasCategoriasExtraidas.Any())
         {
-            Console.WriteLine($"\n✅ EXTRACCIÓN FINALIZADA. TOTAL DE PRODUCTOS: {todosLosProductos.Count}");
-            ExportarAExcel(todosLosProductos, archivoSalida);
+            ExportarAExcelPorCategoria(todasLasCategoriasExtraidas, archivoSalida);
         }
         else
         {
-            Console.WriteLine("\n❌ Fallo en la extracción de productos de todas las páginas.");
+            Console.WriteLine("\n❌ Fallo en la extracción de productos de todas las categorías.");
         }
 
         Console.WriteLine("Proceso finalizado. Presiona cualquier tecla para salir...");
         Console.ReadKey();
     }
 
+    public static List<Categoria> DescubrirCategorias(string urlBaseCategorias)
+    {
+        var categorias = new List<Categoria>();
+
+        new DriverManager().SetUpDriver(new ChromeConfig());
+        var options = new ChromeOptions();
+        options.AddArgument("--headless");
+        options.AddArgument("--disable-gpu");
+        options.AddArgument("--window-size=1920,1080");
+
+        using (var driver = new ChromeDriver(options))
+        {
+            try
+            {
+                driver.Navigate().GoToUrl(urlBaseCategorias);
+                System.Threading.Thread.Sleep(15000);
+
+                var nodosCategoria = driver.FindElements(By.XPath("//a[contains(@href, '/products/category/')]"));
+
+                foreach (var nodo in nodosCategoria)
+                {
+                    string href = nodo.GetAttribute("href");
+                    string nombreLimpio = nodo.Text.Trim().Replace('\n', ' ').Replace('\r', ' ').Trim();
+
+                    if (!string.IsNullOrEmpty(nombreLimpio) && href.Contains("/products/category/"))
+                    {
+                        string urlLimpia = href.Split('?')[0];
+
+                        if (nombreLimpio.ToUpper() == "ACERO" || nombreLimpio.ToUpper() == "CATEGORY IMAGE") continue;
+
+                        categorias.Add(new Categoria
+                        {
+                            Nombre = nombreLimpio,
+                            UrlBase = urlLimpia
+                        });
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error al descubrir categorías: {ex.Message}");
+            }
+        }
+        return categorias;
+    }
+
+    public static int DeterminarTotalPaginas(string urlCategoria)
+    {
+        int totalPaginas = 1;
+
+        new DriverManager().SetUpDriver(new ChromeConfig());
+        var options = new ChromeOptions();
+        options.AddArgument("--headless");
+        options.AddArgument("--disable-gpu");
+        options.AddArgument("--window-size=1920,1080");
+
+        using (var driver = new ChromeDriver(options))
+        {
+            try
+            {
+                driver.Navigate().GoToUrl(urlCategoria);
+                System.Threading.Thread.Sleep(5000);
+
+                // 💡 NUEVO SELECTOR: Busca todos los enlaces de paginación que contengan un número (el page-link)
+                var paginacionNodos = driver.FindElements(By.XPath("//ul[contains(@class, 'pagination')]//li/a[@class='page-link' and string-length(normalize-space(text())) > 0]"));
+
+                if (paginacionNodos.Any())
+                {
+                    // Filtramos y convertimos a enteros
+                    var numerosPagina = paginacionNodos
+                        .Select(n => n.Text.Trim())
+                        .Where(t => int.TryParse(t, out _))
+                        .Select(int.Parse)
+                        .ToList();
+
+                    if (numerosPagina.Any())
+                    {
+                        totalPaginas = numerosPagina.Max();
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"   (Error al determinar la paginación para {urlCategoria}: {ex.Message}. Asumiendo 1 página.)");
+                totalPaginas = 1;
+            }
+        }
+
+        return totalPaginas;
+    }
+
     public static List<Producto> ScrapearCatalogoSelenium(string urlCatalogo)
     {
         var productos = new List<Producto>();
 
-        // Configuración de WebDriver
         new DriverManager().SetUpDriver(new ChromeConfig());
         var options = new ChromeOptions();
         options.AddArgument("--headless");
@@ -119,9 +237,8 @@ public partial class Program
                             new CultureInfo("es-AR"),
                             out decimal precioBase))
                         {
-                            // 💡 CÁLCULO DE PRECIOS
-                            decimal precioMayorista = precioBase * 1.30m; // 30% adicional
-                            decimal precioMinorista = precioBase * 2.00m; // 100% adicional (el doble)
+                            decimal precioMayorista = precioBase * 1.30m;
+                            decimal precioMinorista = precioBase * 2.00m;
 
                             productos.Add(new Producto
                             {
@@ -143,39 +260,43 @@ public partial class Program
         return productos;
     }
 
-    public static void ExportarAExcel(List<Producto> datos, string rutaArchivo)
+    public static void ExportarAExcelPorCategoria(List<Categoria> categorias, string rutaArchivo)
     {
         using (var workbook = new XLWorkbook())
         {
-            var worksheet = workbook.Worksheets.Add("Catálogo Precios");
-
-            // Configurar encabezados
-            worksheet.Cell(1, 1).Value = "Nombre";
-            worksheet.Cell(1, 2).Value = "Precio Base (Web)";
-            worksheet.Cell(1, 3).Value = "Precio Mayorista (+30%)";
-            worksheet.Cell(1, 4).Value = "Precio Minorista (+100%)";
-            worksheet.Cell(1, 5).Value = "URL Origen";
-
-            // Llenar datos
-            int fila = 2;
-            foreach (var producto in datos)
+            foreach (var categoria in categorias)
             {
-                worksheet.Cell(fila, 1).Value = producto.Nombre;
-                worksheet.Cell(fila, 2).Value = producto.PrecioBase;
-                worksheet.Cell(fila, 3).Value = producto.PrecioMayorista;
-                worksheet.Cell(fila, 4).Value = producto.PrecioMinorista;
-                worksheet.Cell(fila, 5).Value = producto.UrlOrigen;
+                if (!categoria.Productos.Any()) continue;
 
-                fila++;
+                string nombreHoja = categoria.Nombre.Replace("/", "-").Replace(":", "").Replace(" ", "_").Trim();
+                if (nombreHoja.Length > 31) nombreHoja = nombreHoja.Substring(0, 31);
+
+                var worksheet = workbook.Worksheets.Add(nombreHoja);
+
+                worksheet.Cell(1, 1).Value = "Nombre";
+                worksheet.Cell(1, 2).Value = "Precio Base (Web)";
+                worksheet.Cell(1, 3).Value = "Precio Mayorista (+30%)";
+                worksheet.Cell(1, 4).Value = "Precio Minorista (+100%)";
+                worksheet.Cell(1, 5).Value = "URL Origen";
+
+                int fila = 2;
+                foreach (var producto in categoria.Productos)
+                {
+                    worksheet.Cell(fila, 1).Value = producto.Nombre;
+                    worksheet.Cell(fila, 2).Value = producto.PrecioBase;
+                    worksheet.Cell(fila, 3).Value = producto.PrecioMayorista;
+                    worksheet.Cell(fila, 4).Value = producto.PrecioMinorista;
+                    worksheet.Cell(fila, 5).Value = producto.UrlOrigen;
+
+                    fila++;
+                }
+
+                worksheet.Columns("B:D").Style.NumberFormat.Format = "$ #,##0.00";
+                worksheet.Columns().AdjustToContents();
             }
 
-            // Aplicar formato de moneda a las columnas de precios (2, 3 y 4)
-            worksheet.Columns("B:D").Style.NumberFormat.Format = "$ #,##0.00";
-
-            // Ajustar el ancho de las columnas
-            worksheet.Columns().AdjustToContents();
             workbook.SaveAs(rutaArchivo);
         }
-        Console.WriteLine($"✅ Exportación exitosa. Archivo guardado en: {Path.GetFullPath(rutaArchivo)}");
+        Console.WriteLine($"✅ Exportación exitosa. Archivo con múltiples solapas guardado en: {Path.GetFullPath(rutaArchivo)}");
     }
 }
