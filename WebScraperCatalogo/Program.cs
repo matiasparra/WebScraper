@@ -2,8 +2,6 @@
 using ClosedXML.Excel;
 using OpenQA.Selenium;
 using OpenQA.Selenium.Chrome;
-using WebDriverManager;
-using WebDriverManager.DriverConfigs.Impl;
 using System.IO;
 using System;
 using System.Threading.Tasks;
@@ -28,6 +26,9 @@ public class Categoria
 
 public partial class Program
 {
+    // 🚨 RUTA FIJA DEL CHROME DRIVER: Asegúrate de que esta ruta sea 100% correcta y exista.
+    private const string ChromeDir = @"C:\Users\Matias UTN\source\repos\WebScraperCatalogo\WebScraperCatalogo\bin\Debug\net8.0\Chrome\141.0.7390.122\X64";
+
     public static async Task Main(string[] args)
     {
         string urlBaseCategorias = "https://www.santerialacatedral.com.ar/products/category/";
@@ -61,7 +62,7 @@ public partial class Program
             for (int page = 1; page <= totalPaginas; page++)
             {
                 string urlPagina = $"{categoria.UrlBase}?page={page}";
-                Console.WriteLine($"   -> Extrayendo página {page} de {totalPaginas}: {urlPagina}");
+                Console.WriteLine($"    -> Extrayendo página {page} de {totalPaginas}: {urlPagina}");
 
                 var productosPagina = ScrapearCatalogoSelenium(urlPagina);
 
@@ -79,7 +80,7 @@ public partial class Program
 
             if (categoria.Productos.Any())
             {
-                Console.WriteLine($"   ✅ Total extraído para {categoria.Nombre}: {categoria.Productos.Count} productos.");
+                Console.WriteLine($"    ✅ Total extraído para {categoria.Nombre}: {categoria.Productos.Count} productos.");
                 todasLasCategoriasExtraidas.Add(categoria);
             }
         }
@@ -101,13 +102,12 @@ public partial class Program
     {
         var categorias = new List<Categoria>();
 
-        new DriverManager().SetUpDriver(new ChromeConfig());
         var options = new ChromeOptions();
         options.AddArgument("--headless");
         options.AddArgument("--disable-gpu");
         options.AddArgument("--window-size=1920,1080");
 
-        using (var driver = new ChromeDriver(options))
+        using (var driver = new ChromeDriver(ChromeDir, options))
         {
             try
             {
@@ -147,25 +147,22 @@ public partial class Program
     {
         int totalPaginas = 1;
 
-        new DriverManager().SetUpDriver(new ChromeConfig());
         var options = new ChromeOptions();
         options.AddArgument("--headless");
         options.AddArgument("--disable-gpu");
         options.AddArgument("--window-size=1920,1080");
 
-        using (var driver = new ChromeDriver(options))
+        using (var driver = new ChromeDriver(ChromeDir, options))
         {
             try
             {
                 driver.Navigate().GoToUrl(urlCategoria);
                 System.Threading.Thread.Sleep(5000);
 
-                // 💡 NUEVO SELECTOR: Busca todos los enlaces de paginación que contengan un número (el page-link)
                 var paginacionNodos = driver.FindElements(By.XPath("//ul[contains(@class, 'pagination')]//li/a[@class='page-link' and string-length(normalize-space(text())) > 0]"));
 
                 if (paginacionNodos.Any())
                 {
-                    // Filtramos y convertimos a enteros
                     var numerosPagina = paginacionNodos
                         .Select(n => n.Text.Trim())
                         .Where(t => int.TryParse(t, out _))
@@ -180,7 +177,7 @@ public partial class Program
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"   (Error al determinar la paginación para {urlCategoria}: {ex.Message}. Asumiendo 1 página.)");
+                Console.WriteLine($"    (Error al determinar la paginación para {urlCategoria}: {ex.Message}. Asumiendo 1 página.)");
                 totalPaginas = 1;
             }
         }
@@ -192,13 +189,12 @@ public partial class Program
     {
         var productos = new List<Producto>();
 
-        new DriverManager().SetUpDriver(new ChromeConfig());
         var options = new ChromeOptions();
         options.AddArgument("--headless");
         options.AddArgument("--disable-gpu");
         options.AddArgument("--window-size=1920,1080");
 
-        using (var driver = new ChromeDriver(options))
+        using (var driver = new ChromeDriver(ChromeDir, options))
         {
             try
             {
